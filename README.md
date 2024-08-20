@@ -38,3 +38,11 @@ The script will automatically place buy and sell limit orders based on your conf
 
 ## Disclaimer:
 This tool is for educational purposes only. Use at your own risk.
+
+## Consider a donation after you buy your lambo.
+
+BTC: `bc1qwjy0hl4z9c930kgy4nud2fp0nw8m6hzknvumgg`
+
+ETH: `0x0941D41Cd0Ee81bd79Dbe34840bB5999C124D3F0`
+
+SOL: `4cpdbmmp1hyTAstA3iUYdFbqeNBwjFmhQLfL5bMgf77z`
