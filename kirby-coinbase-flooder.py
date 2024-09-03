@@ -21,6 +21,7 @@
 #
 # Additional Features:
 #  - force_base_amount: If set to True, the specified_base_amount will be used for orders instead of calculated amounts.
+#  -  ^ use force_base_amount, if the script is failing to pull the base amount and not firing orders.
 #  - specified_base_amount: The specific base amount to use for orders when force_base_amount is True.
 #
 # Example: With a base_amount of 1:
