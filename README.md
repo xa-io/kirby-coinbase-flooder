@@ -25,6 +25,11 @@ This script automates the process of placing buy/sell limit orders on Coinbase u
    - Toggle `debug = True` for detailed console outputs regarding order placement and error handling.
 
 ---
+ - Example of flood orders.
+   
+![orders](https://github.com/user-attachments/assets/3bb4dd62-f674-43e8-a1e2-a0acdaf5a254)
+
+---
 
 ## Installation Requirements
 
