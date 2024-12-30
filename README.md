@@ -27,7 +27,7 @@ This script automates the process of placing buy/sell limit orders on Coinbase u
 ---
  - Example of flood orders.
    
-![orders](https://github.com/user-attachments/assets/3bb4dd62-f674-43e8-a1e2-a0acdaf5a254)
+![orders](https://i.imgur.com/tIbJ8LV.gif)
 
 ---
 
