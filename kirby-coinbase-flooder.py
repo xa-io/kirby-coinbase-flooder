@@ -26,10 +26,11 @@
 #  - use_main_walls: If True, places large orders at main_buy_price and main_sell_price.
 #  - use_flood_spam: If True, places smaller “flood” orders just inside your main walls.
 #  - product_id: Trading pair to use (e.g., "BTC-USD").
-#  - main_buy_price: Large buy wall price. Default is 85000.
-#  - main_sell_price: Large sell wall price. Default is 100000.
-#  - flood_base_amount: The smaller order size used in Flood Spam. Default is 0.00001.
-#  - main_base_amount: The large order size used in Main Walls. Default is 1.
+#  - main_buy_price: Large buy wall price. Default is 50000 (in this example).
+#  - main_sell_price: Large sell wall price. Default is 100000 (in this example).
+#  - flood_base_amount: The smaller order size used in Flood Spam.
+#  - main_base_amount: The large order size used in Main Walls.
+#  - force_flood_base_increment: If True, the script overrides user-configured flood_base_amount with the product's base_increment.
 #
 # How to install:
 #    pip install python-dotenv coinbase coinbase-advanced-py
@@ -39,14 +40,19 @@
 #    COINBASE_API_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 #
 # - Updates -
-#  v0.07
-#   - Removed older 'Waves' and 'Normal' strategies in favor of Main Walls and Flood Spam.
-#   - Transitioned to Coinbase’s current (non-legacy) API keys.
-#   - Added optional toggles to stop the script on insufficient funds or base amount errors.
-#   - Verified script compatibility with Python 3.12.
-#   - Cleaned up code for simpler configuration and improved decimal handling.
+#   v0.07:
+#     * Removed older 'Waves' and 'Normal' strategies in favor of Main Walls and Flood Spam.
+#     * Transitioned to Coinbase’s current (non-legacy) API keys.
+#     * Added optional toggles to stop the script on insufficient funds or base amount errors.
+#     * Verified script compatibility with Python 3.12.
+#     * Cleaned up code for simpler configuration and improved decimal handling.
+#
+#   v0.08:
+#     * Added 'force_flood_base_increment' parameter to optionally override flood_base_amount with the
+#       product's base_increment. This helps ensure flood orders meet Coinbase's minimum size requirements.
 #
 ############################################################################################################################
+
 
 import uuid
 import time
@@ -72,27 +78,24 @@ client = RESTClient(api_key=api_key, api_secret=api_secret)
 #######################################
 
 # Configuration parameters
-sleep_duration = 0.2 
 rate_limit_delay = 0
 debug = False
 show_insufficient_funds = True
 stop_on_insufficient_funds = False
 stop_on_base_amount_error = True
+force_flood_base_increment = True
 
 # Trading parameters
+sleep_duration = 0.2
 enable_buying = True
 enable_selling = True
 use_main_walls = False
 use_flood_spam = True
 product_id = "BTC-USD"
 main_sell_price = 100000
-main_buy_price = 85000
-flood_base_amount = 0.00001
-main_base_amount = 0.1
-
-# The flood spam will buy up to 1 tick under your sell wall
-# The flood spam will sell down to 1 tick above your buy wall
-# Less than 0.2 sleep_duration with buying/selling/main walls/flood spam may skip orders due to rate limits can use 0.1 if only using flood
+main_buy_price = 50000
+flood_base_amount = 0.001
+main_base_amount = 5
 
 #######################################
 #### ONLY CHANGE THINGS ABOVE THIS ####
@@ -123,7 +126,7 @@ def get_increments_from_list(product_list, product_id):
             return quote_increment, base_increment
     raise ValueError(f"Product {product_id} not found in product list.")
 
-# Convert user-specified floats/ints to Decimal after configuration
+# Convert user-specified floats/ints to Decimal
 main_sell_price = Decimal(str(main_sell_price))
 main_buy_price = Decimal(str(main_buy_price))
 flood_base_amount = Decimal(str(flood_base_amount))
@@ -131,16 +134,23 @@ main_base_amount = Decimal(str(main_base_amount))
 
 quote_increment, base_increment = get_increments_from_list(product_list, product_id)
 
+# Flood base amount: use either user config or product's base_increment
+if force_flood_base_increment:
+    flood_base_amount_str = str(base_increment)
+else:
+    flood_base_amount_str = str(flood_base_amount)
+
+# Main base amount is always from config
+main_base_amount_str = str(main_base_amount)
+
 # Compute flood prices using Decimal and quantize to the quote_increment
 flood_buy_price = (main_sell_price - quote_increment).quantize(quote_increment, rounding=ROUND_DOWN)
 flood_sell_price = (main_buy_price + quote_increment).quantize(quote_increment, rounding=ROUND_DOWN)
 
 main_buy_price_str = str(main_buy_price)
 main_sell_price_str = str(main_sell_price)
-main_base_amount_str = str(main_base_amount)
 flood_buy_price_str = str(flood_buy_price)
 flood_sell_price_str = str(flood_sell_price)
-flood_base_amount_str = str(flood_base_amount)
 
 if debug:
     print("Debug info:")
@@ -167,7 +177,8 @@ def handle_order_error(order_response, order_type):
         if debug:
             print(f"{order_type} order error:", error_message)
 
-        if "PREVIEW_INVALID_BASE_SIZE_TOO_SMALL" in error_preview_failure_reason or "Too many decimals in order price" in error_message:
+        if ("PREVIEW_INVALID_BASE_SIZE_TOO_SMALL" in error_preview_failure_reason or 
+            "Too many decimals in order price" in error_message):
             print("Error encountered: Base size or increment issue.")
             if stop_on_base_amount_error:
                 print("Stopping script due to base amount/increment error.")
@@ -207,7 +218,9 @@ def handle_specific_errors(error_message):
         print("Forbidden: Re-KYC might be required.")
         wait_for_user()
         sys.exit()
-    elif "HTTP Error: 500" in error_message or "HTTP Error: 502" in error_message or "HTTP Error: 503" in error_message:
+    elif ("HTTP Error: 500" in error_message or 
+          "HTTP Error: 502" in error_message or 
+          "HTTP Error: 503" in error_message):
         print("Server error at Coinbase.")
         wait_for_user()
         sys.exit()
@@ -268,7 +281,8 @@ def main():
                     handle_order_error(main_buy_order, "Main Buy")
                     if not debug:
                         order_count += 1
-                        print("{} - {} - {} - {} - Main Buy".format(get_timestamp(), product_id, order_count, main_buy_price_str))
+                        print("{} - {} - {} - {} - Main Buy".format(
+                            get_timestamp(), product_id, order_count, main_buy_price_str))
 
                 time.sleep(sleep_duration)
 
@@ -280,7 +294,8 @@ def main():
                     handle_order_error(flood_buy_order, "Flood Buy")
                     if not debug:
                         order_count += 1
-                        print("{} - {} - {} - {} - Flood Buy".format(get_timestamp(), product_id, order_count, flood_buy_price_str))
+                        print("{} - {} - {} - {} - Flood Buy".format(
+                            get_timestamp(), product_id, order_count, flood_buy_price_str))
 
                 time.sleep(sleep_duration)
 
@@ -292,7 +307,8 @@ def main():
                     handle_order_error(main_sell_order, "Main Sell")
                     if not debug:
                         order_count += 1
-                        print("{} - {} - {} - {} - Main Sell".format(get_timestamp(), product_id, order_count, main_sell_price_str))
+                        print("{} - {} - {} - {} - Main Sell".format(
+                            get_timestamp(), product_id, order_count, main_sell_price_str))
 
                 time.sleep(sleep_duration)
 
@@ -304,12 +320,14 @@ def main():
                     handle_order_error(flood_sell_order, "Flood Sell")
                     if not debug:
                         order_count += 1
-                        print("{} - {} - {} - {} - Flood Sell".format(get_timestamp(), product_id, order_count, flood_sell_price_str))
+                        print("{} - {} - {} - {} - Flood Sell".format(
+                            get_timestamp(), product_id, order_count, flood_sell_price_str))
 
                 time.sleep(sleep_duration)
 
             except Exception as e:
                 error_message = str(e)
+                # Handle known HTTP error codes
                 if any(code in error_message for code in ["429", "403", "400", "401", "500", "502", "503"]):
                     handle_specific_errors(error_message)
                 else:
