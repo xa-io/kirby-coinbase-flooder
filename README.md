@@ -1,4 +1,4 @@
-# Kirby Christmas Lights Buy/Sell Limit Order Flooder (v0.07) for Coinbase Advanced
+# Kirby Christmas Lights Buy/Sell Limit Order Flooder (v0.08) for Coinbase Advanced
 
 This script automates the process of placing buy/sell limit orders on Coinbase using **Coinbase’s current (non-legacy) API keys**, simulating a dynamic trading pattern that can incorporate both Main Walls and a Flood Spam of smaller orders.
 
