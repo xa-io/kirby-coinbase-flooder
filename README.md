@@ -97,6 +97,8 @@ Open the script and look for the following **configuration parameters** at the t
 
 - `stop_on_base_amount_error = True`  
   If `True`, the script stops on a base-size or increment error.
+- `force_flood_base_increment = True`  
+  If `True`, the script not use `flood_base_amount` and use the `base_increment` exchange minimum instead.
 
 ### Trade Flow
 
