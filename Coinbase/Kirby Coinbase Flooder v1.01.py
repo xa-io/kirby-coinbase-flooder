@@ -1,6 +1,6 @@
 ############################################################################################################################
 # 
-# Kirby Coinbase Flooder v1.00
+# Kirby Coinbase Flooder v1.01
 #
 # This script combines orderbook scanning and limit order flooding functionality to:
 # 1. Monitor the orderbook for a selected trading pair
@@ -14,6 +14,13 @@
 #
 # Configuration Parameters are available below and in README.md
 #
+# Revision Notes:
+#
+# v1.01 - Added SHOW_SPREAD_INFO option (default: False) to reduce console clutter by conditionally displaying spread analysis information
+#       - Improved log formatting by removing USD suffix from pair names and restructuring timestamp display for cleaner output
+#
+# v1.00 - Initial release
+#
 ############################################################################################################################
 
 ###########################################
@@ -21,39 +28,40 @@
 ###########################################
 
 # Orderbook scanner settings
-SCAN_INTERVAL = 3                       # Seconds to wait between scans (public books are not updated in real-time, and may cause spread fillers to double up, 2-3 seconds is fine)
-SPREAD_ORDER_DELAY = 0.2                # Delay between each spread order placement (faster than 0.2 may cause rate limit errors)
-MAX_SPREAD_ORDERS = 3                   # Maximum number of orders to place when filling a spread (limits to closest orders to the other side)
-FILL_SPREAD = True                      # If True, performs spread-filling, otherwise just flood orders
-FILL_BUYSELL_DISABLE = True             # If True, disables FILL_SPREAD when both ENABLE_BUYING and ENABLE_SELLING are True to prevent spread orders from canceling each other out
-SHOW_TIMESTAMP = True                   # If True, timestamps will be displayed in logs
+SCAN_INTERVAL = 3
+SPREAD_ORDER_DELAY = 0.2
+MAX_SPREAD_ORDERS = 3
+FILL_SPREAD = True
+FILL_BUYSELL_DISABLE = True
+SHOW_SPREAD_INFO = False
 
 # Order flooding settings
 PAIR = "BTC-USD"
-ENABLE_BUYING = True                    # Enables or disables placing buy orders up to the main_sell_price
-ENABLE_SELLING = False                  # Enables or disables placing sell orders down to the main_buy_price
-USE_MAIN_WALLS = False                  # If True, places large orders at main_buy_price and main_sell_price
-USE_FLOOD_SPAM = True                   # If True, places smaller "flood" orders to push price up or down
+ENABLE_BUYING = True
+ENABLE_SELLING = False
+USE_MAIN_WALLS = False
+USE_FLOOD_SPAM = True
 MAIN_SELL_PRICE = 125000.00
 MAIN_BUY_PRICE = 105000.00
+STOP_ON_INSUFFICIENT_FUNDS = True
 
 # Flood settings
-FORCE_FLOOD_BASE_INCREMENT = True       # If True, overrides flood_base_amount with the product's base_increment, if False, uses the configured flood_base_amount
-FLOOD_BASE_AMOUNT = 0.0000001           # The smaller order size used in Flood Spam
-MAIN_BASE_AMOUNT = 0.0001               # The large order size used in Main Walls
+FORCE_FLOOD_BASE_INCREMENT = True
+FLOOD_BASE_AMOUNT = 0.0000001
+MAIN_BASE_AMOUNT = 0.0001
 
 # System settings
-SLEEP_DURATION = 0.2                    # Delay between placing each order (faster than 0.2 may cause rate limit errors)
-RATE_LIMIT_DELAY = 1                    # Wait time if rate limit is exceeded
-DEBUG = False                           # Toggle debug mode
-SHOW_HTTP_ERRORS = False                # Show HTTP error logs from Coinbase API
-SHOW_INSUFFICIENT_FUNDS = True          # Show insufficient funds errors
-STOP_ON_INSUFFICIENT_FUNDS = True       # Stop script on insufficient funds errors
-STOP_ON_BASE_AMOUNT_ERROR = True        # Stop script on base amount errors
+SLEEP_DURATION = 0.2
+RATE_LIMIT_DELAY = 1
+DEBUG = False
+SHOW_TIMESTAMP = False
+SHOW_HTTP_ERRORS = False
+SHOW_INSUFFICIENT_FUNDS = True
+STOP_ON_BASE_AMOUNT_ERROR = True
 
 # Products file configuration
-PRODUCTS_FILE = "products.json"         # File to store product information
-PRODUCTS_MAX_AGE_HOURS = 72             # Maximum age of products file in hours before refresh
+PRODUCTS_FILE = "products.json"
+PRODUCTS_MAX_AGE_HOURS = 72
 
 #########################################
 #### End of Configuration Parameters ####
@@ -108,7 +116,7 @@ product_id = PAIR
 # Function to get formatted timestamp for logging
 def get_timestamp():
     if SHOW_TIMESTAMP:
-        return f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
+        return f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] - "
     return ""
 
 # Helper function for logging with timestamp
@@ -610,7 +618,7 @@ def scan_and_fill_spread():
     log(f"Flood Base Amount: {flood_base_amount_str}")
     log(f"=============================================")
     log(f"Press Ctrl+C to exit")
-    log("============================")
+    log("=============================================")
     
     try:
         # Track the time of the last orderbook scan
@@ -656,7 +664,8 @@ def scan_and_fill_spread():
                             display_time = datetime.datetime.now().strftime('%H:%M:%S')
                             
                             # Display the data
-                            log(f"{display_time:^20} | {bid_str:^12} | {ask_str:^12} | {spread_str:^12}")
+                            if SHOW_SPREAD_INFO:
+                                log(f"{display_time:^20} | {bid_str:^12} | {ask_str:^12} | {spread_str:^12}")
                             
                             # Determine if we should fill spread based on settings
                             should_fill_spread = FILL_SPREAD
@@ -673,7 +682,8 @@ def scan_and_fill_spread():
                                 # Calculate price levels to fill
                                 price_levels = calculate_price_levels(top_bid, top_ask, quote_increment, decimals)
                                 original_level_count = len(price_levels)
-                                log(f"Spread detected with {original_level_count} price levels to fill")
+                                if SHOW_SPREAD_INFO:
+                                    log(f"Spread detected with {original_level_count} price levels to fill")
                                 
                                 # Place spread filling orders - alternating buy/sell to fill spread
                                 spread_mid = (top_bid + top_ask) / 2  # Middle of the spread
@@ -743,7 +753,8 @@ def scan_and_fill_spread():
                                     
                                     # For logging, just show prices without order types
                                     price_levels = [price for price, _ in price_levels_with_type]
-                                    log(f"Limited to {len(price_levels)} price levels due to MAX_SPREAD_ORDERS={MAX_SPREAD_ORDERS} (Buy: {buy_count}, Sell: {sell_count})")
+                                    if SHOW_SPREAD_INFO:
+                                        log(f"Limited to {len(price_levels)} price levels due to MAX_SPREAD_ORDERS={MAX_SPREAD_ORDERS} (Buy: {buy_count}, Sell: {sell_count})")
                                 else:
                                     # Use all price levels, determine buy/sell based on position relative to spread mid
                                     price_levels_with_type = []
@@ -807,7 +818,8 @@ def scan_and_fill_spread():
                                     
                                     # Only increment counter and log if order was successful
                                     order_count += 1
-                                    log(f"{get_timestamp()}- {product_id} - #{order_count} - {price_str} - Spread {order_type.capitalize()}")
+                                    symbol = product_id.split('-')[0]  # Extract symbol without -USD
+                                    log(f"{get_timestamp()}{symbol} - #{order_count} - {price_str} - Spread {order_type.capitalize()}")
                                     
                                     # Use spread order delay between orders when no rate limiting
                                     time.sleep(SPREAD_ORDER_DELAY)
@@ -826,7 +838,8 @@ def scan_and_fill_spread():
                     error_result = handle_order_error(main_buy_order, "Main Buy")
                     if not error_result:  # Only proceed if no error
                         order_count += 1
-                        log(f"{get_timestamp()}- {product_id} - #{order_count} - {main_buy_price_str} - Main Buy")
+                        symbol = product_id.split('-')[0]  # Extract symbol without -USD
+                        log(f"{get_timestamp()}{symbol} - #{order_count} - {main_buy_price_str} - Main Buy")
                         time.sleep(SLEEP_DURATION)
 
                 # Flood Buy - ALWAYS run this at SLEEP_DURATION interval
@@ -839,7 +852,8 @@ def scan_and_fill_spread():
                     error_result = handle_order_error(flood_buy_order, "Flood Buy")
                     if not error_result:  # Only proceed if no error
                         order_count += 1
-                        log(f"{get_timestamp()}- {product_id} - #{order_count} - {flood_buy_price_str} - Flood Buy")
+                        symbol = product_id.split('-')[0]  # Extract symbol without -USD
+                        log(f"{get_timestamp()}{symbol} - #{order_count} - {flood_buy_price_str} - Flood Buy")
                         time.sleep(SLEEP_DURATION)
 
                 # Main Sell Wall
@@ -848,7 +862,8 @@ def scan_and_fill_spread():
                     error_result = handle_order_error(main_sell_order, "Main Sell")
                     if not error_result:  # Only proceed if no error
                         order_count += 1
-                        log(f"{get_timestamp()}- {product_id} - #{order_count} - {main_sell_price_str} - Main Sell")
+                        symbol = product_id.split('-')[0]  # Extract symbol without -USD
+                        log(f"{get_timestamp()}{symbol} - #{order_count} - {main_sell_price_str} - Main Sell")
                         time.sleep(SLEEP_DURATION)
 
                 # Flood Sell
@@ -861,7 +876,8 @@ def scan_and_fill_spread():
                     error_result = handle_order_error(flood_sell_order, "Flood Sell")
                     if not error_result:  # Only proceed if no error
                         order_count += 1
-                        log(f"{get_timestamp()}- {product_id} - #{order_count} - {flood_sell_price_str} - Flood Sell")
+                        symbol = product_id.split('-')[0]  # Extract symbol without -USD
+                        log(f"{get_timestamp()}{symbol} - #{order_count} - {flood_sell_price_str} - Flood Sell")
                         time.sleep(SLEEP_DURATION)
                     
             except Exception as e:
