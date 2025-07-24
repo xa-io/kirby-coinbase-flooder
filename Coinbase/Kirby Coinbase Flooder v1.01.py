@@ -1,6 +1,6 @@
 ############################################################################################################################
 # 
-# Kirby Coinbase Flooder v1.01
+# Kirby Coinbase Flooder v1.06
 #
 # This script combines orderbook scanning and limit order flooding functionality to:
 # 1. Monitor the orderbook for a selected trading pair
@@ -15,6 +15,38 @@
 # Configuration Parameters are available below and in README.md
 #
 # Revision Notes:
+#
+# v1.06 - Enhanced wait message logic for no-spread scenarios and fixed flood stacking logic
+#       - Added new wait message: "Price is at target with no spread, waiting..." when spread <= 1 tick and price is at target
+#       - Detects when ask price equals MAIN_SELL_PRICE exactly with no spread (for buying scenarios)
+#       - Detects when bid price equals MAIN_BUY_PRICE exactly with no spread (for selling scenarios)
+#       - Fixed logic to only trigger wait message when price is exactly at target, not within 1 tick of target
+#       - Fixed AVOID_FLOOD_STACKING logic to only skip when price equals target, allowing proper flooding up to target
+#       - Provides clearer feedback when market is at target price but lacks spread for order placement
+#
+# v1.05 - Added flood stacking avoidance and improved waiting messages
+#       - Added AVOID_FLOOD_STACKING option (default: True) to prevent repeated flood orders within 1 tick of main prices
+#       - When AVOID_FLOOD_STACKING is True, avoids placing flood orders if within 1 tick of MAIN_SELL_PRICE or MAIN_BUY_PRICE
+#       - Updated waiting messages to display actual MAIN_SELL_PRICE and MAIN_BUY_PRICE values for clarity
+#       - Reduces order book clutter by preventing unnecessary stacking near target prices
+#
+# v1.04 - Enhanced price boundary logic with dynamic pause/resume functionality
+#       - When STOP_ON_PRICE_ACHIEVED is false, flooding now pauses if price moves outside target range
+#       - For buy flooding: pauses when ask price > MAIN_SELL_PRICE, resumes when ask price <= MAIN_SELL_PRICE
+#       - For sell flooding: pauses when bid price < MAIN_BUY_PRICE, resumes when bid price >= MAIN_BUY_PRICE
+#       - Continues price monitoring every SCAN_INTERVAL during pause periods
+#       - Prevents unnecessary flooding when price targets are temporarily exceeded
+#
+# v1.03 - Enhanced price boundary enforcement and STOP_ON_PRICE_ACHIEVED logic
+#       - Buy orders are now prevented from being placed at or above MAIN_SELL_PRICE
+#       - Sell orders are now prevented from being placed at or below MAIN_BUY_PRICE
+#       - STOP_ON_PRICE_ACHIEVED now only stops when price moves 1 tick past target (ensures continued flooding until price is met)
+#       - Added boundary checks to both spread filling and flood order logic
+#       - Enhanced debug logging for boundary violations
+#
+# v1.02 - Added STOP_ON_PRICE_ACHIEVED option (default: False) to automatically stop the script when target prices are reached
+#       - If ENABLE_BUYING is true and ask spread > MAIN_SELL_PRICE, script stops (price achieved)
+#       - If ENABLE_SELLING is true and bid spread < MAIN_BUY_PRICE, script stops (price achieved)
 #
 # v1.01 - Added SHOW_SPREAD_INFO option (default: False) to reduce console clutter by conditionally displaying spread analysis information
 #       - Improved log formatting by removing USD suffix from pair names and restructuring timestamp display for cleaner output
@@ -43,12 +75,17 @@ USE_MAIN_WALLS = False
 USE_FLOOD_SPAM = True
 MAIN_SELL_PRICE = 125000.00
 MAIN_BUY_PRICE = 105000.00
-STOP_ON_INSUFFICIENT_FUNDS = True
+
+# Order size settings
+FORCE_FLOOD_BASE_INCREMENT = True
+FLOOD_BASE_AMOUNT = 0.00000001
+MAIN_BASE_AMOUNT = 0.1
 
 # Flood settings
-FORCE_FLOOD_BASE_INCREMENT = True
-FLOOD_BASE_AMOUNT = 0.0000001
-MAIN_BASE_AMOUNT = 0.0001
+STOP_ON_INSUFFICIENT_FUNDS = True
+STOP_ON_PRICE_ACHIEVED = False
+SHOW_WAIT = True
+AVOID_FLOOD_STACKING = True
 
 # System settings
 SLEEP_DURATION = 0.2
@@ -520,9 +557,55 @@ def calculate_price_levels(bid_price, ask_price, tick_size, precision):
     return price_levels
 
 # Format price for API
-def format_price_for_order(price, precision):
-    """Format price with proper precision for order placement"""
-    return format_with_precision(price, precision)
+def format_price_for_order(price, decimals):
+    """Format price for order placement with proper decimal precision"""
+    return f"{price:.{decimals}f}".rstrip('0').rstrip('.')
+
+def check_price_achieved(top_bid, top_ask, main_buy_price, main_sell_price, quote_increment):
+    """Check if target prices have been achieved based on orderbook data
+    Only stops when price moves 1 tick past the target to ensure we continue flooding until price is met
+    """
+    price_achieved = False
+    achievement_message = ""
+    
+    # Check if buying is enabled and ask price is 1 tick above main sell price
+    if ENABLE_BUYING and STOP_ON_PRICE_ACHIEVED:
+        # Stop only when ask price is 1 tick above the main sell price
+        if top_ask > main_sell_price + quote_increment:
+            price_achieved = True
+            achievement_message = f"Price achieved! Ask price ({top_ask}) > Main Sell Price + 1 tick ({main_sell_price + quote_increment})"
+    
+    # Check if selling is enabled and bid price is 1 tick below main buy price
+    if ENABLE_SELLING and STOP_ON_PRICE_ACHIEVED:
+        # Stop only when bid price is 1 tick below the main buy price
+        if top_bid < main_buy_price - quote_increment:
+            price_achieved = True
+            achievement_message = f"Price achieved! Bid price ({top_bid}) < Main Buy Price - 1 tick ({main_buy_price - quote_increment})"
+    
+    return price_achieved, achievement_message
+
+def check_flooding_pause_status(top_bid, top_ask, main_buy_price, main_sell_price):
+    """Check if flooding should be paused based on current market prices
+    When STOP_ON_PRICE_ACHIEVED is false, this determines if we should pause flooding
+    until prices return to acceptable ranges
+    """
+    pause_buy_flooding = False
+    pause_sell_flooding = False
+    pause_message = ""
+    
+    # Only apply pause logic when STOP_ON_PRICE_ACHIEVED is false
+    if not STOP_ON_PRICE_ACHIEVED:
+        # Check if buy flooding should be paused (ask price above MAIN_SELL_PRICE)
+        if ENABLE_BUYING and top_ask > main_sell_price:
+            pause_buy_flooding = True
+            pause_message += f"Buy flooding paused: ask price ({top_ask}) > MAIN_SELL_PRICE ({main_sell_price}). "
+        
+        # Check if sell flooding should be paused (bid price below MAIN_BUY_PRICE)
+        if ENABLE_SELLING and top_bid < main_buy_price:
+            pause_sell_flooding = True
+            pause_message += f"Sell flooding paused: bid price ({top_bid}) < MAIN_BUY_PRICE ({main_buy_price}). "
+    
+    return pause_buy_flooding, pause_sell_flooding, pause_message.strip()
 
 # Main orderbook scanning and spread filling function
 def scan_and_fill_spread():
@@ -630,6 +713,10 @@ def scan_and_fill_spread():
         spread = None
         price_levels = []
         
+        # Initialize pause status variables
+        pause_buy_flooding = False
+        pause_sell_flooding = False
+        
         while True:
             current_time = time.time()
             
@@ -666,6 +753,44 @@ def scan_and_fill_spread():
                             # Display the data
                             if SHOW_SPREAD_INFO:
                                 log(f"{display_time:^20} | {bid_str:^12} | {ask_str:^12} | {spread_str:^12}")
+                            
+                            # Check if target price has been achieved
+                            if STOP_ON_PRICE_ACHIEVED:
+                                price_achieved, achievement_msg = check_price_achieved(top_bid, top_ask, main_buy_price, main_sell_price, quote_increment)
+                                if price_achieved:
+                                    log("==============================================")
+                                    log(achievement_msg)
+                                    log("Stopping script as target price has been achieved.")
+                                    log("==============================================")
+                                    wait_for_user()
+                                    sys.exit(0)
+                            
+                            # Check if flooding should be paused based on current prices
+                            pause_buy_flooding, pause_sell_flooding, pause_message = check_flooding_pause_status(top_bid, top_ask, main_buy_price, main_sell_price)
+                            
+                            # Show waiting messages at SCAN_INTERVAL frequency when SHOW_WAIT is enabled
+                            if SHOW_WAIT:
+                                # Check if there's no spread and price is at target
+                                no_spread_at_target = False
+                                if spread <= quote_increment:  # No spread (or minimal spread)
+                                    # Check if we're at the sell wall (ask price equals main sell price exactly)
+                                    if ENABLE_BUYING and top_ask == main_sell_price:
+                                        no_spread_at_target = True
+                                    # Check if we're at the buy wall (bid price equals main buy price exactly)
+                                    elif ENABLE_SELLING and top_bid == main_buy_price:
+                                        no_spread_at_target = True
+                                
+                                if no_spread_at_target:
+                                    log(f"Price is at target, waiting...")
+                                else:
+                                    if pause_buy_flooding and ENABLE_BUYING:
+                                        log(f"Price is above ({main_sell_price}), waiting...")
+                                    if pause_sell_flooding and ENABLE_SELLING:
+                                        log(f"Price is under ({main_buy_price}), waiting...")
+                            
+                            # Log pause status if any flooding is paused (debug mode)
+                            if pause_message and debug:
+                                log(f"Price boundary status: {pause_message}")
                             
                             # Determine if we should fill spread based on settings
                             should_fill_spread = FILL_SPREAD
@@ -790,10 +915,20 @@ def scan_and_fill_spread():
                                             if debug:
                                                 log(f"Skipping buy order at {price_str} (buying disabled)")
                                             continue
+                                        # Prevent buy orders above MAIN_SELL_PRICE
+                                        if price >= main_sell_price:
+                                            if debug:
+                                                log(f"Skipping buy order at {price_str} (price >= {main_sell_price})")
+                                            continue
                                     else:  # order_type == "sell"
                                         if not ENABLE_SELLING:
                                             if debug:
                                                 log(f"Skipping sell order at {price_str} (selling disabled)")
+                                            continue
+                                        # Prevent sell orders below MAIN_BUY_PRICE
+                                        if price <= main_buy_price:
+                                            if debug:
+                                                log(f"Skipping sell order at {price_str} (price <= {main_buy_price})")
                                             continue
                                     
                                     if debug:
@@ -844,17 +979,37 @@ def scan_and_fill_spread():
 
                 # Flood Buy - ALWAYS run this at SLEEP_DURATION interval
                 if USE_FLOOD_SPAM and ENABLE_BUYING:
-                    # Calculate flood buy price (one tick below main sell price)
-                    flood_buy_price = main_sell_price - quote_increment
-                    flood_buy_price_str = format_price_for_order(flood_buy_price, decimals)
-                    
-                    flood_buy_order = place_limit_order("buy", product_id, flood_base_amount_str, flood_buy_price_str)
-                    error_result = handle_order_error(flood_buy_order, "Flood Buy")
-                    if not error_result:  # Only proceed if no error
-                        order_count += 1
-                        symbol = product_id.split('-')[0]  # Extract symbol without -USD
-                        log(f"{get_timestamp()}{symbol} - #{order_count} - {flood_buy_price_str} - Flood Buy")
-                        time.sleep(SLEEP_DURATION)
+                    # Check if buy flooding should be paused due to price boundaries
+                    if pause_buy_flooding:
+                        if debug:
+                            log(f"Skipping flood buy order - flooding paused (ask price {top_ask} > {main_sell_price})")
+                    else:
+                        # Calculate flood buy price (one tick below main sell price)
+                        flood_buy_price = main_sell_price - quote_increment
+                        
+                        # Check if we should avoid stacking within 1 tick of main price
+                        should_skip_stacking = False
+                        if AVOID_FLOOD_STACKING and top_ask is not None:
+                            # Skip if current ask equals MAIN_SELL_PRICE (meaning we're at the target)
+                            if top_ask == main_sell_price:
+                                should_skip_stacking = True
+                                if debug:
+                                    log(f"Skipping flood buy order - AVOID_FLOOD_STACKING enabled and ask price ({top_ask}) equals ({main_sell_price})")
+                        
+                        if not should_skip_stacking:
+                            # Ensure flood buy price doesn't exceed MAIN_SELL_PRICE boundary
+                            if flood_buy_price < main_sell_price:
+                                flood_buy_price_str = format_price_for_order(flood_buy_price, decimals)
+                                
+                                flood_buy_order = place_limit_order("buy", product_id, flood_base_amount_str, flood_buy_price_str)
+                                error_result = handle_order_error(flood_buy_order, "Flood Buy")
+                                if not error_result:  # Only proceed if no error
+                                    order_count += 1
+                                    symbol = product_id.split('-')[0]  # Extract symbol without -USD
+                                    log(f"{get_timestamp()}{symbol} - #{order_count} - {flood_buy_price_str} - Flood Buy")
+                                    time.sleep(SLEEP_DURATION)
+                            elif debug:
+                                log(f"Skipping flood buy order - price {flood_buy_price} would be >= {main_sell_price}")
 
                 # Main Sell Wall
                 if USE_MAIN_WALLS and ENABLE_SELLING:
@@ -868,17 +1023,37 @@ def scan_and_fill_spread():
 
                 # Flood Sell
                 if USE_FLOOD_SPAM and ENABLE_SELLING:
-                    # Calculate flood sell price (one tick above main buy price)
-                    flood_sell_price = main_buy_price + quote_increment
-                    flood_sell_price_str = format_price_for_order(flood_sell_price, decimals)
-                    
-                    flood_sell_order = place_limit_order("sell", product_id, flood_base_amount_str, flood_sell_price_str)
-                    error_result = handle_order_error(flood_sell_order, "Flood Sell")
-                    if not error_result:  # Only proceed if no error
-                        order_count += 1
-                        symbol = product_id.split('-')[0]  # Extract symbol without -USD
-                        log(f"{get_timestamp()}{symbol} - #{order_count} - {flood_sell_price_str} - Flood Sell")
-                        time.sleep(SLEEP_DURATION)
+                    # Check if sell flooding should be paused due to price boundaries
+                    if pause_sell_flooding:
+                        if debug:
+                            log(f"Skipping flood sell order - flooding paused (bid price {top_bid} < {main_buy_price})")
+                    else:
+                        # Calculate flood sell price (one tick above main buy price)
+                        flood_sell_price = main_buy_price + quote_increment
+                        
+                        # Check if we should avoid stacking within 1 tick of main price
+                        should_skip_stacking = False
+                        if AVOID_FLOOD_STACKING and top_bid is not None:
+                            # Skip if current bid equals MAIN_BUY_PRICE (meaning we're at the target)
+                            if top_bid == main_buy_price:
+                                should_skip_stacking = True
+                                if debug:
+                                    log(f"Skipping flood sell order - AVOID_FLOOD_STACKING enabled and bid price ({top_bid}) equals ({main_buy_price})")
+                        
+                        if not should_skip_stacking:
+                            # Ensure flood sell price doesn't go below MAIN_BUY_PRICE boundary
+                            if flood_sell_price > main_buy_price:
+                                flood_sell_price_str = format_price_for_order(flood_sell_price, decimals)
+                                
+                                flood_sell_order = place_limit_order("sell", product_id, flood_base_amount_str, flood_sell_price_str)
+                                error_result = handle_order_error(flood_sell_order, "Flood Sell")
+                                if not error_result:  # Only proceed if no error
+                                    order_count += 1
+                                    symbol = product_id.split('-')[0]  # Extract symbol without -USD
+                                    log(f"{get_timestamp()}{symbol} - #{order_count} - {flood_sell_price_str} - Flood Sell")
+                                    time.sleep(SLEEP_DURATION)
+                            elif debug:
+                                log(f"Skipping flood sell order - price {flood_sell_price} would be <= {main_buy_price}")
                     
             except Exception as e:
                 error_message = str(e)
