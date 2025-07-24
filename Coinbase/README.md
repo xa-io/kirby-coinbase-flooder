@@ -1,4 +1,4 @@
-# Kirby Coinbase Flooder v1.01
+# Kirby Coinbase Flooder v1.06
 
 This script combines orderbook scanning and limit order flooding functionality to help increase trading activity in crypto markets on Coinbase.
 
@@ -32,8 +32,8 @@ This script combines orderbook scanning and limit order flooding functionality t
 
 1. Clone the repository:
 ```
-git clone https://github.com/xa-io/kirby-coinbase-flooder/tree/main/Coinbase
-cd coinbase-spread-flooder
+git clone https://github.com/xa-io/kirby-coinbase-flooder/edit/main/Coinbase
+cd kirby-coinbase-flooder
 ```
 
 2. Install required packages:
@@ -51,7 +51,7 @@ COINBASE_API_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 ## Configuration
 
-Edit the configuration variables at the top of `Kirby Coinbase Flooder v1.01.py` to customize:
+Edit the configuration variables at the top of `Kirby Coinbase Flooder v1.06.py` to customize:
 
 ```python
 # Orderbook scanner settings
@@ -70,12 +70,17 @@ USE_MAIN_WALLS = False                  # If True, places large orders at main_b
 USE_FLOOD_SPAM = True                   # If True, places smaller "flood" orders to push price up or down
 MAIN_SELL_PRICE = 125000.00             # The sell price used in Main Walls, flood buy spam will push price up to this price
 MAIN_BUY_PRICE = 105000.00              # The buy price used in Main Walls, flood sell spam will push price down to this price
-STOP_ON_INSUFFICIENT_FUNDS = True       # Stop script on insufficient funds errors
 
-# Flood settings
+# Order size settings
 FORCE_FLOOD_BASE_INCREMENT = True       # If True, overrides flood_base_amount with the product's base_increment, if False, uses the configured flood_base_amount
 FLOOD_BASE_AMOUNT = 0.0000001           # The smaller order size used in Flood Spam
 MAIN_BASE_AMOUNT = 0.0001               # The large order size used in Main Walls
+
+# Flood settings
+STOP_ON_INSUFFICIENT_FUNDS = True       # Stop script on insufficient funds errors
+STOP_ON_PRICE_ACHIEVED = True           # Stop script when target prices are achieved in orderbook
+SHOW_WAIT = True                        # Show waiting messages when flooding is paused due to price boundaries
+AVOID_FLOOD_STACKING = True             # Prevent repeated flood orders within 1 tick of main prices to reduce order book clutter
 
 # System settings
 SLEEP_DURATION = 0.2                    # Delay between placing each order (faster than 0.2 may cause rate limit errors)
@@ -96,7 +101,7 @@ PRODUCTS_MAX_AGE_HOURS = 72             # Maximum age of products file in hours 
 Run the script:
 
 ```
-python Kirby Coinbase Flooder v1.01.py
+python "Kirby Coinbase Flooder v1.06.py"
 ```
 
 Press Ctrl+C at any time to stop the script.
@@ -130,7 +135,7 @@ The script now automatically fetches and uses the correct `base_increment` value
 
 ## Script Files
 
-- `Kirby Coinbase Flooder v1.01.py`: The main script combining orderbook scanning and spread filling
+- `Kirby Coinbase Flooder v1.06.py`: The main script combining orderbook scanning and spread filling
 - `products.json`: Auto-generated cache file containing Coinbase product information (created on first run)
 - `.env`: Environment file containing your Coinbase API credentials (you must create this)
 - `requirements.txt`: Python package dependencies
@@ -146,6 +151,48 @@ The script will automatically create:
 This script is provided for educational purposes only. Use at your own risk. The authors are not responsible for any financial losses or account restrictions that may result from using this script.
 
 ## Version History
+
+### v1.06
+- Enhanced wait message logic for no-spread scenarios
+- Added new wait message: "Price is at target, waiting..." when spread <= 1 tick and price is at target
+- Detects when ask price equals MAIN_SELL_PRICE exactly with no spread (for buying scenarios)
+- Detects when bid price equals MAIN_BUY_PRICE exactly with no spread (for selling scenarios)
+- Fixed logic to only trigger wait message when price is exactly at target, not within 1 tick of target
+- Fixed AVOID_FLOOD_STACKING logic to allow proper flooding up to target price
+- AVOID_FLOOD_STACKING now only skips when ask/bid equals target price, not within 1 tick
+- This allows flood orders to continue up to one tick below/above target as intended
+- Provides clearer feedback when market is at target price but lacks spread for order placement
+
+### v1.05
+- Added AVOID_FLOOD_STACKING configuration option (default: True) to prevent repeated flood orders within 1 tick of main prices
+- When AVOID_FLOOD_STACKING is True, avoids placing flood orders if current ask/bid is within 1 tick of MAIN_SELL_PRICE/MAIN_BUY_PRICE
+- Reduces order book clutter by preventing unnecessary stacking near target prices when spread filling has likely occurred
+- Updated waiting messages to display actual MAIN_SELL_PRICE and MAIN_BUY_PRICE values for better clarity
+- Enhanced user experience with more informative console output during price boundary pauses
+
+### v1.04
+- Enhanced price boundary logic with dynamic pause/resume functionality
+- When STOP_ON_PRICE_ACHIEVED is false, flooding now pauses if price moves outside target range
+- For buy flooding: pauses when ask price > MAIN_SELL_PRICE, resumes when ask price <= MAIN_SELL_PRICE
+- For sell flooding: pauses when bid price < MAIN_BUY_PRICE, resumes when bid price >= MAIN_BUY_PRICE
+- Continues price monitoring every SCAN_INTERVAL during pause periods
+- Prevents unnecessary flooding when price targets are temporarily exceeded
+- Added SHOW_WAIT configuration option to control waiting message display
+- When SHOW_WAIT is True, displays user-friendly waiting messages during price boundary pauses
+
+### v1.03
+- Enhanced price boundary enforcement to prevent orders outside MAIN_BUY_PRICE and MAIN_SELL_PRICE ranges
+- Buy orders are now prevented from being placed at or above MAIN_SELL_PRICE
+- Sell orders are now prevented from being placed at or below MAIN_BUY_PRICE
+- Updated STOP_ON_PRICE_ACHIEVED logic to only stop when price moves 1 tick past target (ensures continued flooding until price is met)
+- Added boundary checks to both spread filling and flood order logic
+- Enhanced debug logging for boundary violations
+
+### v1.02
+- Added STOP_ON_PRICE_ACHIEVED option (default: True) to automatically stop the script when target prices are reached
+- If ENABLE_BUYING is true and ask spread > MAIN_SELL_PRICE, script stops (price achieved)
+- If ENABLE_SELLING is true and bid spread < MAIN_BUY_PRICE, script stops (price achieved)
+- Enhanced price monitoring with automatic script termination when objectives are met
 
 ### v1.01
 - Added SHOW_SPREAD_INFO option (default: False) to reduce console clutter by conditionally displaying spread analysis information
