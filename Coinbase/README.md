@@ -32,7 +32,7 @@ This script combines orderbook scanning and limit order flooding functionality t
 
 1. Clone the repository:
 ```
-git clone https://github.com/yourusername/coinbase-spread-flooder.git
+git clone https://github.com/xa-io/kirby-coinbase-flooder/tree/main/Coinbase
 cd coinbase-spread-flooder
 ```
 
